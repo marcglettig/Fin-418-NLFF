@@ -21,13 +21,18 @@ from article import Article
 
 
 def newswire_scrape(symbol):
+    '''
+    webscraping function going through articles related to ticker symbol passed and stores textual results in folder.
+    :param symbol: String of ticker symbol
+    :return: Saves textual data direclty to the folder
+    '''
     URL = "https://www.prnewswire.com/search/news/?keyword=" + symbol
     print("Checking on: " + URL)
     page_number = 0
 
     # Creating folder structure and setting output path
     module_path = os.path.dirname(os.path.realpath(__file__))
-    output_dir = os.path.join(module_path, 'data/' + symbol)
+    output_dir = os.path.join(module_path, 'data/articles/' + symbol)
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 
@@ -83,6 +88,11 @@ def newswire_scrape(symbol):
 
 
 def yahoo_scrape(symbol):
+    '''
+    Webscraper for the yahoo finance press reports page, goes through all linked reports of the ticker symbol
+    :param symbol: String of the ticker symbol
+    :return: Saves the reports directly in a folder
+    '''
     driver = webdriver.Chrome(ChromeDriverManager().install())
 
     opts = webdriver.ChromeOptions()
@@ -93,7 +103,7 @@ def yahoo_scrape(symbol):
 
     # Creating folder structure and setting output path
     module_path = os.path.dirname(os.path.realpath(__file__))
-    output_dir = os.path.join(module_path, 'data/' + symbol)
+    output_dir = os.path.join(module_path, 'data/articles/' + symbol)
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 

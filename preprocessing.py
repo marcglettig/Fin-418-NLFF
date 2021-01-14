@@ -34,102 +34,6 @@ def clean_text(text: str):
     return text
 
 
-def replace_contractions(text: str):
-    """Replace contractions in string of text"""
-    return contractions.fix(text)
-
-
-def tokenized_words(text: str):
-    return nltk.word_tokenize(text)
-
-
-def remove_non_ascii(words):
-    """Remove non-ASCII characters from list of tokenized words"""
-    new_words = []
-    for word in words:
-        new_word = unicodedata.normalize('NFKD', word).encode('ascii', 'ignore').decode('utf-8', 'ignore')
-        new_words.append(new_word)
-    return new_words
-
-
-def to_lowercase(words):
-    """Convert all characters to lowercase from list of tokenized words"""
-    new_words = []
-    for word in words:
-        new_word = word.lower()
-        new_words.append(new_word)
-    return new_words
-
-
-def remove_punctuation(words):
-    """Remove punctuation from list of tokenized words"""
-    new_words = []
-    for word in words:
-        new_word = re.sub(r'[^\w\s]', '', word)
-        if new_word != '':
-            new_words.append(new_word)
-    return new_words
-
-
-def replace_numbers(words):
-    """Replace all interger occurrences in list of tokenized words with textual representation"""
-    p = inflect.engine()
-    new_words = []
-    for word in words:
-        if word.isdigit():
-            new_word = p.number_to_words(word)
-            new_words.append(new_word)
-        else:
-            new_words.append(word)
-    return new_words
-
-
-def remove_stopwords(words):
-    """Remove stop words from list of tokenized words"""
-    new_words = []
-    for word in words:
-        if word not in nltk.corpus.stopwords.words('english'):
-            new_words.append(word)
-    return new_words
-
-
-def stem_words(words):
-    """Stem words in list of tokenized words"""
-    stemmer = nltk.stem.LancasterStemmer()
-    stems = []
-    for word in words:
-        stem = stemmer.stem(word)
-        stems.append(stem)
-    return stems
-
-
-def lemmatize_verbs(words):
-    """Lemmatize verbs in list of tokenized words"""
-    lemmatizer = nltk.stem.WordNetLemmatizer()
-    lemmas = []
-    for word in words:
-        lemma = lemmatizer.lemmatize(word, pos='v')
-        lemmas.append(lemma)
-    return lemmas
-
-
-def normalize(words):
-    words = remove_non_ascii(words)
-    words = to_lowercase(words)
-    words = remove_punctuation(words)
-    words = replace_numbers(words)
-    words = remove_stopwords(words)
-    return words
-
-
-def define_relevant(text: str, stock: str):
-    # Basic function to exclude irrelevant articles
-    relevant = True
-    if len(text) < 500:
-        relevant = False
-    return relevant
-
-
 def text_sizes(path: str):
     article_names = os.listdir(path)
 
@@ -201,7 +105,7 @@ def clean_returns(returns: pd.DataFrame):
     return returns
 
 
-def find_label(snp: pd.DataFrame, returns: pd.DataFrame, date: datetime.date, max_iter: int):
+def find_label(snp: pd.DataFrame, returns: pd.DataFrame, date: datetime.date, max_iter: int, adj_ts_model: pd.DataFrame):
     '''
     Takes the date of an article together with the returns
     :param snp:
@@ -211,11 +115,15 @@ def find_label(snp: pd.DataFrame, returns: pd.DataFrame, date: datetime.date, ma
     :return:
     '''
     returns['Delta'] = -returns['Adj Close'].diff(-2) / returns['Adj Close']
+    try:
+        returns['Delta'] = returns['Delta'] - adj_ts_model['Delta']
+    except:
+        pass
     returns['rel_Delta'] = returns['Delta'] - snp['Delta']
     i = max_iter
     while i > 0:
         try:
-            label = returns['Delta'].loc[date - datetime.timedelta(days=1)]
+            label = returns['rel_Delta'].loc[date - datetime.timedelta(days=1)]
             break
         except:
             # increase days until found
@@ -224,15 +132,21 @@ def find_label(snp: pd.DataFrame, returns: pd.DataFrame, date: datetime.date, ma
     return label
 
 
-def format_to_bert(path: str = os.getcwd()):
+def to_float(string: str):
+    if type(string)==str:
+        string = string.strip('[').strip(']')
+    return float(string)
+
+
+def format_to_bert(adj_ts_model: str = '', path: str = os.getcwd()):
     """
     Takes all article files in ticker symbol folders to convert them to a single dataframe stored as tsv file.
     Adds labels to the articles to facilitate supervised learning by comparing the returns to the S&P500 returns.
     :param path: the dir. where the folders of each ticker symbols are stored, containing txt files for the articles
     :return: the training dataframe, additionally stored as tsv file
     """
-    input_dir = path + '/data'
-    output_dir = path
+    input_dir = path + '/data/articles'
+    output_dir = path + '/data/tabular_data'
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 
@@ -241,14 +155,36 @@ def format_to_bert(path: str = os.getcwd()):
     df = pd.DataFrame(columns=['text', 'label', 'date'])
     oldest_article = datetime.date.today()
 
-    snp = yf.download('SNP', start='2020-01-01', end='2021-01-05', progress=False)
+    start_date = '2020-01-01'
+    end_date = '2021-01-05'
+    adj_data = None
+
+    if adj_ts_model == 'LSTM':
+        lstm_data = pd.read_csv('data/tabular_data/lstm_pred.csv')
+        lstm_data['Date'] = lstm_data['Date'].apply(lambda x: dateutil.parser.parse(x))
+        lstm_data.set_index('Date', inplace=True)
+        adj_data = lstm_data
+        start_date = str(lstm_data.index.min().date())
+        end_date = str(lstm_data.index.max().date())
+
+    if adj_ts_model == 'ARIMA':
+        arima_data = pd.read_csv('data/tabular_data/prediction_arima_withdate.csv')
+        arima_data['Date'] = arima_data['Date'].apply(lambda x: dateutil.parser.parse(x))
+        arima_data.set_index('Date', inplace=True)
+        for col in arima_data.columns:
+            arima_data[col] = arima_data[col].apply(lambda x: to_float(x))
+        adj_data = arima_data
+        start_date = str(arima_data.index.min().date())
+        end_date = str(arima_data.index.max().date())
+
+    snp = yf.download('SNP', start=start_date, end=end_date, progress=False)
     snp['Delta'] = -snp['Adj Close'].diff(-2) / (snp['Adj Close'])
 
     for stock in available_cmps:
         input_path = input_dir + '/' + stock
         article_names = os.listdir(input_path)
         try:
-            returns = yf.download(stock, start='2020-01-01', end='2021-01-04', progress=False)
+            returns = yf.download(stock, start=start_date, end=end_date, progress=False)
         except:
             print('Could not download returns properly for: ' + stock)
             continue
@@ -260,11 +196,14 @@ def format_to_bert(path: str = os.getcwd()):
             title = clean_text(art._title)
             text = title + clean_text(art._text)
             try:
-                label = find_label(snp, returns, date, 5)        # ensure delta for next valid trading day found
+                if adj_ts_model:
+                    adj_data['Delta'] = adj_data[stock]
+                label = find_label(snp, returns, date, 5, adj_data)
             except:
-                print(
-                   'Could not find matching trading Delta for ' + str(date) + '.Check if returns are well defined and if '
-                   'maxIter is sufficiently high. Stock: ' + stock)
+                if not adj_ts_model:
+                    print('Could not find matching trading Delta for ' + str(date) +
+                          '.Check if returns are well defined and if '
+                          'maxIter is sufficiently high. Stock: ' + stock)
                 continue
 
             df = df.append({'text' : text,
@@ -277,7 +216,7 @@ def format_to_bert(path: str = os.getcwd()):
 
     print('Train DF of size ' + str(bert_df.shape[0]))
     print('oldest article: ' + str(oldest_article))
-    print('save DF to: ' + output_dir + '/data.tsv')
-    bert_df.to_csv(output_dir + '/data.tsv', sep='\t', index=False, header=False)
+    print('save DF to: ' + output_dir + '/data_' + adj_ts_model + '.tsv')
+    bert_df.to_csv(output_dir + '/data_' + adj_ts_model + '.tsv', sep='\t', index=False, header=False)
 
     return df
